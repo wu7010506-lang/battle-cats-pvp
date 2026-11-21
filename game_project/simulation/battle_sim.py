@@ -282,7 +282,7 @@ class BattleSimulation:
         def _resolve_deck_form(k: Any) -> Optional[Tuple[int, int]]:
             if k is None:
                 return None
-            spec = CAT_REGISTRY.get(k) or ENEMY_REGISTRY.get(k)
+            spec = k if isinstance(k, dict) else CAT_REGISTRY.get(k) or ENEMY_REGISTRY.get(k)
             if not spec or not isinstance(spec, dict):
                 return None
             cid = spec.get("id")
@@ -812,21 +812,22 @@ class BattleSimulation:
         spawn_x = (castle_x - 30) if team == TEAM_CAT else (castle_x + 30)
         new_unit = SimUnit(team=team, slot=slot, unit_key=unit_key, spec=spec, pos_x=spawn_x)
 
-        tr_hp_mult = team_tr.get("cat_hp_mult", 1.0)
-        tr_atk_mult = team_tr.get("cat_atk_mult", 1.0)
-        tot_hp_mult = combo_eff.get("hp_mult", 1.0) * tr_hp_mult
-        tot_atk_mult = combo_eff.get("atk_mult", 1.0) * tr_atk_mult
+        if not spec.get("fixed_stats"):
+            tr_hp_mult = team_tr.get("cat_hp_mult", 1.0)
+            tr_atk_mult = team_tr.get("cat_atk_mult", 1.0)
+            tot_hp_mult = combo_eff.get("hp_mult", 1.0) * tr_hp_mult
+            tot_atk_mult = combo_eff.get("atk_mult", 1.0) * tr_atk_mult
 
-        if tot_hp_mult != 1.0:
-            new_unit.max_hp = max(1, int(new_unit.max_hp * tot_hp_mult))
-            new_unit.hp = new_unit.max_hp
-            new_unit.kb_threshold = max(1.0, float(new_unit.max_hp) / float(new_unit.knockback_max))
-        if tot_atk_mult != 1.0:
-            new_unit.attack_power = max(1, int(new_unit.attack_power * tot_atk_mult))
-            for h in new_unit.attack_hits:
-                h["damage"] = max(1, int(h["damage"] * tot_atk_mult))
-        if combo_eff.get("spd_mult", 1.0) != 1.0:
-            new_unit.speed = max(1, int(new_unit.speed * combo_eff["spd_mult"]))
+            if tot_hp_mult != 1.0:
+                new_unit.max_hp = max(1, int(new_unit.max_hp * tot_hp_mult))
+                new_unit.hp = new_unit.max_hp
+                new_unit.kb_threshold = max(1.0, float(new_unit.max_hp) / float(new_unit.knockback_max))
+            if tot_atk_mult != 1.0:
+                new_unit.attack_power = max(1, int(new_unit.attack_power * tot_atk_mult))
+                for h in new_unit.attack_hits:
+                    h["damage"] = max(1, int(h["damage"] * tot_atk_mult))
+            if combo_eff.get("spd_mult", 1.0) != 1.0:
+                new_unit.speed = max(1, int(new_unit.speed * combo_eff["spd_mult"]))
         self.units[team][slot] = new_unit
 
         self._emit_event({"type": "spawn", "x": spawn_x, "team": team, "name": spec["name"]})

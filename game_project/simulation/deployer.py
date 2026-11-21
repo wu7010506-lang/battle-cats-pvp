@@ -64,7 +64,7 @@ class CatDeployer:
         strictly respecting the PONOS native engine hard minimum of 60 frames (2.0s)."""
         for idx in range(len(self.deck_keys)):
             base_cd = self.base_max_cooldowns[idx] if idx < len(self.base_max_cooldowns) else 150
-            eff_cd = max(60, base_cd - reduction_frames)
+            eff_cd = self._effective_cooldown(idx, base_cd, reduction_frames)
             self.max_cooldowns[idx] = eff_cd
             if self.cooldowns[idx] > eff_cd:
                 self.cooldowns[idx] = eff_cd
@@ -169,7 +169,12 @@ class CatDeployer:
     def trigger_cooldown(self, idx: int, reduction_frames: int = 0):
         if 0 <= idx < len(self.cooldowns):
             base_cd = self.base_max_cooldowns[idx] if idx < len(self.base_max_cooldowns) else self.max_cooldowns[idx]
-            # PONOS Hard Floor: Cooldown can NEVER be lower than 60 frames (2.0s) regardless of treasures or combos
-            eff_cd = max(60, base_cd - reduction_frames)
+            eff_cd = self._effective_cooldown(idx, base_cd, reduction_frames)
             self.max_cooldowns[idx] = eff_cd
             self.cooldowns[idx] = eff_cd
+
+    def _effective_cooldown(self, idx: int, base_cd: int, reduction_frames: int) -> int:
+        spec = self._lookup_spec(self.deck_keys[idx]) or {}
+        if spec.get("fixed_stats"):
+            return base_cd
+        return max(60, base_cd - reduction_frames)

@@ -27,10 +27,12 @@ const TEAM_ENEMY = 1; // Left Castle (P2 Guest)
 let RIGS = {};
 let BASE_CATS = [];
 let CUSTOM_UNITS = [];
+let BUILTIN_UNIT = null;
 let SELECTED_DECK = [];
 let IMAGES = {};
 
 let currentRoomCode = "";
+let playerToken = "";
 let myTeam = TEAM_CAT;
 let roomState = null;
 let eventSource = null;
@@ -303,6 +305,34 @@ function showToast(msg) {
   }, 3200);
 }
 
+function setPlayerName(value) {
+  ["hostPlayerName", "joinPlayerName", "formationPlayerName"].forEach(id => {
+    document.getElementById(id).value = value;
+  });
+  renderDeckSelector();
+}
+
+function deckForPlayer(playerName) {
+  if (!BUILTIN_UNIT || playerName === BUILTIN_UNIT.player_name || !SELECTED_DECK.includes(BUILTIN_UNIT.key)) {
+    return SELECTED_DECK;
+  }
+  return SELECTED_DECK.filter(key => key !== BUILTIN_UNIT.key);
+}
+
+function unitIconUrl(item) {
+  return item.portrait || (item.icon ? `/assets/${item.icon}.png` : "");
+}
+
+function drawPortrait(ctx, url, centerX, bottomY, maxWidth, maxHeight) {
+  const img = loadImage(url, url);
+  if (!img.complete || !img.naturalWidth) return false;
+  const ratio = Math.min(maxWidth / img.naturalWidth, maxHeight / img.naturalHeight);
+  const width = img.naturalWidth * ratio;
+  const height = img.naturalHeight * ratio;
+  ctx.drawImage(img, centerX - width / 2, bottomY - height, width, height);
+  return true;
+}
+
 function switchTab(tabName) {
   document.querySelectorAll(".view-section").forEach(el => el.classList.remove("active"));
   document.querySelectorAll(".tab-btn").forEach(el => el.classList.remove("active"));
@@ -333,15 +363,11 @@ async function initApp() {
     RIGS = data.rigs || {};
     BASE_CATS = data.base_cats || [];
     CUSTOM_UNITS = data.custom_units || [];
+    BUILTIN_UNIT = data.builtin_unit || null;
 
     // Preload only essential FX + starter deck sprite sheets & current deck icons (avoid flooding 779 icon requests on remote links!)
     Object.values(RIGS).forEach(r => {
       if (r && r.png) loadImage(`rig_${r.code}`, r.png);
-    });
-    const catByKey = new Map(BASE_CATS.map(c => [c.key, c]));
-    myDeck.forEach(k => {
-      const c = catByKey.get(k);
-      if (c && c.icon) loadImage(`icon_${c.icon}`, `/assets/${c.icon}.png`);
     });
 
     // Populate Studio Rig Selector with all 38 official cat rigs + enemy rigs
@@ -385,6 +411,11 @@ async function initApp() {
       if (!SELECTED_DECK.includes(c.key) && SELECTED_DECK.length < 10) {
         SELECTED_DECK.push(c.key);
       }
+    });
+    const catByKey = new Map(BASE_CATS.map(c => [c.key, c]));
+    SELECTED_DECK.forEach(k => {
+      const c = catByKey.get(k);
+      if (c && c.icon) loadImage(`icon_${c.icon}`, unitIconUrl(c));
     });
 
     renderDeckSelector();
@@ -569,7 +600,30 @@ function applyTalentsToClientItem(item) {
 }
 
 function getAllSelectableUnits() {
+  const builtin = BUILTIN_UNIT;
+  const canSelectBuiltin = builtin && document.getElementById("formationPlayerName").value.trim() === builtin.player_name;
   return [
+    ...(canSelectBuiltin ? [{
+      key: builtin.key,
+      name: builtin.name,
+      cost: builtin.cost,
+      base_hp: builtin.hp,
+      base_ap: builtin.attack_power,
+      hp: builtin.hp,
+      ap: builtin.attack_power,
+      range: builtin.attack_range,
+      speed: builtin.speed,
+      kb_count: builtin.knockback_count,
+      foreswing: builtin.attack_windup,
+      tba: builtin.attack_interval,
+      cd_frames: builtin.cooldown_frames,
+      is_area: builtin.target_type === "area",
+      portrait: builtin.portrait,
+      rarity: builtin.rarity,
+      rarity_label: builtin.rarity_label,
+      desc: "玩家名稱符合條件時可選用的內建角色。",
+      custom: true,
+    }] : []),
     ...BASE_CATS.map(c => {
       const brackets = c.level_brackets || null;
       const maxLv = c.max_level || 50;
@@ -619,7 +673,7 @@ function getAllSelectableUnits() {
         ? applyTalentsToClientItem(baseItem)
         : { ...baseItem, cost: Math.max(15, Math.round(baseItem.cost * 1.5)) };
     }),
-    ...CUSTOM_UNITS.map(cu => ({
+    ...CUSTOM_UNITS.filter(cu => (cu.key || cu.id) !== builtin?.key).map(cu => ({
       key: cu.key || cu.id,
       name: cu.name,
       cost: cu.cost || 300,
@@ -687,8 +741,10 @@ function getAbilityTags(item) {
 }
 
 function syncDeckIfInRoom() {
-  if (currentRoomCode) {
-    sendRoomAction("UPDATE_DECK", SELECTED_DECK);
+  if (currentRoomCode && roomState) {
+    const playerName = myTeam === TEAM_CAT ? roomState.host_name : roomState.guest_name;
+    const deck = deckForPlayer(playerToken ? playerName : "");
+    if (deck.length > 0) sendRoomAction("UPDATE_DECK", deck);
   }
 }
 
@@ -718,6 +774,9 @@ function inspectCat(item) {
   const nameEl = document.getElementById("inspName");
   if (nameEl) nameEl.textContent = `${item.name} (${formatMaxLevelLabel(item)})`;
 
+  const animationControls = document.getElementById("formationAnimationControls");
+  if (animationControls) animationControls.style.display = item.portrait ? "none" : "flex";
+
   let hitBreakdownHtml = "";
   if (Array.isArray(item.attack_hits) && item.attack_hits.length > 1) {
     const parts = item.attack_hits.map(h => h.damage.toLocaleString()).join(" + ");
@@ -731,6 +790,7 @@ function inspectCat(item) {
       <div>體力 (HP)：<strong style="color:#7bed9f;">${item.hp.toLocaleString()}</strong> ｜ 總攻擊力 (AP)：<strong style="color:#ff9f43;">${item.ap.toLocaleString()}</strong></div>
       ${hitBreakdownHtml}
       <div>射程：<strong>${item.range} (${item.is_area ? "範圍攻擊" : "單體攻擊"})</strong> ｜ 跑速：<strong>${item.speed}</strong> ｜ 出手：<strong>${item.foreswing || 10}F</strong></div>
+      ${item.portrait ? `<div>攻擊間隔：<strong>${item.tba}F</strong></div>` : ""}
     `;
   }
   const abEl = document.getElementById("inspAbilities");
@@ -748,7 +808,9 @@ function inspectCat(item) {
   const talEl = document.getElementById("inspTalentsBox");
   if (talEl) {
     const talents = Array.isArray(item.talents) ? item.talents : [];
-    if (talents.length === 0) {
+    if (item.portrait) {
+      talEl.innerHTML = "";
+    } else if (talents.length === 0) {
       talEl.innerHTML = `<div style="font-size:12px;color:#6c7d99;padding:4px 0;">此角色目前在官方 v15.6.1 尚無開放本能。</div>`;
     } else {
       const dis = getDisabledTalentSet(item.key);
@@ -832,7 +894,15 @@ function clearDeckSelection() {
 function renderDeckSelector() {
   const allItems = getAllSelectableUnits();
   const byKey = new Map(allItems.map(i => [i.key, i]));
-  if (!inspectedItem && allItems.length > 0) {
+  if (BUILTIN_UNIT && !byKey.has(BUILTIN_UNIT.key)) {
+    const allowedDeck = deckForPlayer("");
+    if (allowedDeck !== SELECTED_DECK) {
+      SELECTED_DECK = allowedDeck;
+      if (SELECTED_DECK.length === 0 && allItems.length > 0) SELECTED_DECK.push(allItems[0].key);
+    }
+    if (selectedRarityFilter === "builtin") selectedRarityFilter = "ALL";
+  }
+  if ((!inspectedItem || !byKey.has(inspectedItem.key)) && allItems.length > 0) {
     inspectCat(byKey.get(SELECTED_DECK[0]) || allItems[0]);
   }
 
@@ -847,8 +917,9 @@ function renderDeckSelector() {
       const slotDiv = document.createElement("div");
       if (item) {
         slotDiv.className = "formation-slot-card filled";
-        const iconHtml = item.icon
-          ? `<img class="slot-icon-img" src="/assets/${item.icon}.png" alt="${item.name}">`
+        const iconUrl = unitIconUrl(item);
+        const iconHtml = iconUrl
+          ? `<img class="slot-icon-img${item.portrait ? " builtin-portrait" : ""}" src="${iconUrl}" alt="${item.name}">`
           : `<div style="height:48px;display:flex;align-items:center;justify-content:center;color:#ff9ff3;font-weight:900;font-size:13px;">★ 自製</div>`;
         slotDiv.innerHTML = `
           <span class="slot-hotkey">${hotkeys[i]}</span>
@@ -889,12 +960,13 @@ function renderDeckSelector() {
       { id: "super_rare", label: "激稀有" },
       { id: "uber_rare", label: "超激稀有" },
       { id: "legend_rare", label: "傳說稀有" },
+      { id: "builtin", label: "內建角色" },
       { id: "custom", label: "自製角色" },
     ];
     tabsEl.innerHTML = "";
     rarityDefs.forEach(rt => {
       const cnt = rt.id === "ALL" ? allItems.length : allItems.filter(x => x.rarity === rt.id).length;
-      if (rt.id === "custom" && cnt === 0) return;
+      if ((rt.id === "custom" || rt.id === "builtin") && cnt === 0) return;
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "rarity-tab" + (selectedRarityFilter === rt.id ? " active" : "");
@@ -933,8 +1005,9 @@ function renderDeckSelector() {
       const slotIdx = SELECTED_DECK.indexOf(item.key);
       const isSel = slotIdx >= 0;
       card.className = "unit-chip" + (isSel ? " selected" : "");
-      const iconHtml = item.icon
-        ? `<img loading="lazy" class="chip-icon" src="/assets/${item.icon}.png" alt="${item.name}">`
+      const iconUrl = unitIconUrl(item);
+      const iconHtml = iconUrl
+        ? `<img loading="lazy" class="chip-icon${item.portrait ? " builtin-portrait" : ""}" src="${iconUrl}" alt="${item.name}">`
         : `<div class="chip-icon" style="display:flex;align-items:center;justify-content:center;color:#ff9ff3;font-weight:900;font-size:12px;">自製</div>`;
       const abTags = getAbilityTags(item).slice(0, 2).join("・");
       const lvStr = formatMaxLevelLabel(item);
@@ -993,8 +1066,9 @@ function renderDeckSelector() {
       const chip = document.createElement("div");
       chip.className = "lobby-deck-mini";
       chip.title = `${it.name} (${formatMaxLevelLabel(it)})`;
-      chip.innerHTML = it.icon
-        ? `<img src="/assets/${it.icon}.png" alt="${it.name}"><span>${it.name}</span>`
+      const iconUrl = unitIconUrl(it);
+      chip.innerHTML = iconUrl
+        ? `<img class="${it.portrait ? "builtin-portrait" : ""}" src="${iconUrl}" alt="${it.name}"><span>${it.name}</span>`
         : `<div class="mini-custom">★</div><span>${it.name}</span>`;
       chip.onclick = () => {
         inspectCat(it);
@@ -1018,6 +1092,11 @@ function renderFormationPreview() {
   ctx.moveTo(20, 152);
   ctx.lineTo(pCanvas.width - 20, 152);
   ctx.stroke();
+
+  if (inspectedItem.portrait) {
+    drawPortrait(ctx, inspectedItem.portrait, pCanvas.width / 2, 150, 190, 140);
+    return;
+  }
 
   const rigCode = inspectedItem.rig || "000_f";
   const rigObj = RIGS[rigCode] || RIGS["000_f"];
@@ -1177,7 +1256,7 @@ async function createRoom(vsAi = false) {
         player_name: playerName,
         room_code: customCode,
         vs_ai: vsAi,
-        deck: SELECTED_DECK,
+        deck: deckForPlayer(playerName),
         cat_level: selectedCatLevel,
         talent_overrides: TALENT_OVERRIDES,
         custom_units: CUSTOM_UNITS,
@@ -1185,7 +1264,7 @@ async function createRoom(vsAi = false) {
     });
     const data = await res.json();
     if (data.ok) {
-      enterBattleRoom(data.room_code, TEAM_CAT, data.state);
+      enterBattleRoom(data.room_code, TEAM_CAT, data.state, data.player_token);
       showToast(vsAi ? `已開啟單人 AI 練習房（房號 ${data.room_code}）！` : `房間建立成功！請把房號【${data.room_code}】告訴朋友！`);
     }
   } catch (err) {
@@ -1211,7 +1290,7 @@ async function joinRoomDirect(code) {
       body: JSON.stringify({
         room_code: code,
         player_name: playerName,
-        deck: SELECTED_DECK,
+        deck: deckForPlayer(playerName),
         talent_overrides: TALENT_OVERRIDES,
         custom_units: CUSTOM_UNITS,
       }),
@@ -1221,15 +1300,16 @@ async function joinRoomDirect(code) {
       showToast(data.error || `找不到房號 ${code}`);
       return;
     }
-    enterBattleRoom(data.room_code, TEAM_ENEMY, data.state);
+    enterBattleRoom(data.room_code, TEAM_ENEMY, data.state, data.player_token);
     showToast(`成功加入房號【${data.room_code}】！你操作左側主堡 (P2)！`);
   } catch (err) {
     showToast("加入房間失敗: " + err.message);
   }
 }
 
-function enterBattleRoom(roomCode, team, initialState) {
+function enterBattleRoom(roomCode, team, initialState, token = "") {
   currentRoomCode = roomCode;
+  playerToken = token;
   myTeam = team;
   roomState = initialState;
   fxHitSparks = [];
@@ -1321,7 +1401,7 @@ function onReceiveRoomState(st) {
   if (st && Array.isArray(st.units)) {
     st.units.forEach(u => {
       activeIds.add(u.id);
-      if (u.rig && !RIGS[u.rig]) missingRigs.push(u.rig);
+      if (!u.portrait && u.rig && !RIGS[u.rig]) missingRigs.push(u.rig);
       const isOneshot = new URLSearchParams(window.location.search).get("oneshot") === "1";
       let vis = unitVisualState.get(u.id);
       const atkId = u.atk_id || 0;
@@ -1580,6 +1660,7 @@ async function sendRoomAction(action, payload = null) {
       body: JSON.stringify({
         room_code: currentRoomCode,
         team: myTeam,
+        player_token: playerToken,
         action,
         payload,
       }),
@@ -2114,7 +2195,11 @@ function renderBattleScene() {
       // Authentic PONOS knockback: horizontal slide + native State 3/5/7 KB vertical bounce arc
       const drawY = GROUND_Y + 4 + zOff + drawWorldY * worldScale;
       const uScale = (u.scale ? (u.scale / UNIT_RENDER_SCALE) : 1.0) * unitScale;
-      renderSkeletalRig(ctx, u.rig, u.anim, drawAf, sx, drawY, uScale, flipH);
+      if (u.portrait) {
+        drawPortrait(ctx, u.portrait, sx, drawY, 85 * uScale, 110 * uScale);
+      } else {
+        renderSkeletalRig(ctx, u.rig, u.anim, drawAf, sx, drawY, uScale, flipH);
+      }
 
       // Starred Alien Barrier: Shimmering spherical plasma forcefield
       if (!u.is_dying && u.barrier > 0) {
@@ -2863,8 +2948,10 @@ function renderDeployBar(ctx, myHud) {
           drawSubImage(ctx, im2, 134, 410, 126, 101, cx - 7, cy - 7, cw + 14, ch + 14);
         }
 
-        let drawnPortrait = false;
-        if (card.icon && !card.custom) {
+        let drawnPortrait = card.portrait
+          ? drawPortrait(ctx, card.portrait, cx + cw / 2, cy + ch, cw, ch)
+          : false;
+        if (!card.portrait && card.icon && !card.custom) {
           const iconImg = loadImage(`icon_${card.icon}`, `/assets/${card.icon}.png`);
           if (iconImg && iconImg.complete && iconImg.naturalWidth > 0) {
             drawSubImage(ctx, iconImg, 9, 21, 110, 85, cx, cy, cw, ch);

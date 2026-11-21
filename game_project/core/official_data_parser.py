@@ -16,7 +16,13 @@ from typing import Dict, List, Optional, Tuple, Any
 from .constants import UNIT_RENDER_SCALE
 from .talents import TalentCatalog
 
-DEFAULT_OFFICIAL_DATA_DIR = r"E:\rea\game_project\data\official_extracted_data"
+PROJECT_DIR = os.path.dirname(os.path.dirname(__file__))
+DEFAULT_OFFICIAL_DATA_DIR = os.path.join(PROJECT_DIR, "data", "official_extracted_data")
+if not os.path.isdir(DEFAULT_OFFICIAL_DATA_DIR):
+    DEFAULT_OFFICIAL_DATA_DIR = r"E:\rea\game_project\data\official_extracted_data"
+DEFAULT_OFFICIAL_ASSET_DIR = os.path.join(PROJECT_DIR, "assets", "official_extracted")
+if not os.path.isdir(DEFAULT_OFFICIAL_ASSET_DIR):
+    DEFAULT_OFFICIAL_ASSET_DIR = r"E:\rea\game_project\assets\official_extracted"
 DEFAULT_UNIT_LEVEL_BRACKETS = [20, 20, 20, 20, 20, 20, 10, 10, 10, 10]
 
 
@@ -323,10 +329,11 @@ class OfficialDataParser:
                 self.stage_names.append(f"關卡 {stage_idx + 1}")
 
     def _get_maanim_attack_len(self, texture_code: str, foreswing: int) -> int:
-        asset_dir = r"E:\rea\game_project\assets\official_extracted"
-        anim_path = os.path.join(asset_dir, f"{texture_code}02.maanim")
+        anim_path = os.path.join(DEFAULT_OFFICIAL_ASSET_DIR, f"{texture_code}02.maanim")
         if not os.path.isfile(anim_path) and texture_code == "186_e":
-            anim_path = r"E:\rea\phase23_26\enemy_186\186_e02.maanim"
+            anim_path = os.path.join(PROJECT_DIR, "..", "phase23_26", "enemy_186", "186_e02.maanim")
+            if not os.path.isfile(anim_path):
+                anim_path = r"E:\rea\phase23_26\enemy_186\186_e02.maanim"
         if os.path.isfile(anim_path):
             try:
                 max_f = 1
@@ -596,7 +603,7 @@ class OfficialDataParser:
         cat's highest available evolution form (u > s > c > f) with authentic unitbuy.csv
         rarity & max level (base + plus).
         """
-        asset_dir = r"E:\rea\game_project\assets\official_extracted"
+        asset_dir = DEFAULT_OFFICIAL_ASSET_DIR
         if not os.path.isdir(asset_dir):
             return
         avail = {fn.lower() for fn in os.listdir(asset_dir)}

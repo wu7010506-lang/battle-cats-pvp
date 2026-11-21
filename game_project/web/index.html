@@ -594,6 +594,11 @@
       flex-shrink: 0;
     }
 
+    .builtin-portrait,
+    .lobby-deck-mini img.builtin-portrait {
+      object-fit: contain;
+    }
+
     .chip-info { flex: 1; min-width: 0; }
     .chip-title { font-size: 13px; font-weight: 800; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .chip-meta { font-size: 11px; color: var(--text-sub); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -613,6 +618,7 @@
     .rarity-uber_rare { background: #c084fc; color: #fff; }
     .rarity-legend_rare { background: linear-gradient(135deg, #ec4899, #8b5cf6, #06b6d4); color: #fff; }
     .rarity-custom { background: #f472b6; }
+    .rarity-builtin { background: var(--gold-bright); }
 
     /* Right Inspector & Character Talent Tuning Menu */
     .inspector-box {
@@ -796,8 +802,8 @@
           </div>
           <p class="desc">點擊「單人 vs AI」可立即開戰測試編隊與本能；或點擊「建立對戰房間」取得 4 位數房號邀請朋友。</p>
           <div class="form-row">
-            <label>玩家暱稱</label>
-            <input type="text" id="hostPlayerName" value="P1 房主" />
+            <label for="hostPlayerName">玩家名稱</label>
+            <input type="text" id="hostPlayerName" placeholder="P1 房主" oninput="setPlayerName(this.value)" />
           </div>
           <div class="form-row">
             <label>自訂 4 位數房號（留空自動產生）</label>
@@ -821,8 +827,8 @@
           </div>
           <p class="desc">輸入朋友提供的 4 位數房號即可連線，系統會自動套用你目前的 10 隻出陣編隊與本能開關設定。</p>
           <div class="form-row">
-            <label>玩家暱稱</label>
-            <input type="text" id="joinPlayerName" value="P2 挑戰者" />
+            <label for="joinPlayerName">玩家名稱</label>
+            <input type="text" id="joinPlayerName" placeholder="P2 挑戰者" oninput="setPlayerName(this.value)" />
           </div>
           <div class="form-row">
             <label>4 位數房號 (Room Code)</label>
@@ -855,6 +861,10 @@
     <!-- 2. FORMATION & CHARACTER TUNING WORKSPACE -->
     <section class="view-section" id="view-formation">
       <div class="panel">
+        <div class="form-row">
+          <label for="formationPlayerName">玩家名稱</label>
+          <input type="text" id="formationPlayerName" oninput="setPlayerName(this.value)" />
+        </div>
         <div class="panel-head">
           <h3 id="rosterPanelTitle">開戰前配隊選角與本能調整</h3>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
@@ -895,7 +905,7 @@
               <span id="inspRarityBadge" class="rarity-badge rarity-0">基本</span>
             </div>
             <canvas id="formationPreviewCanvas" width="320" height="175"></canvas>
-            <div style="display:flex;gap:6px;margin-bottom:8px;">
+            <div id="formationAnimationControls" style="display:flex;gap:6px;margin-bottom:8px;">
               <button type="button" id="animBtnWalk" class="preset-btn" style="flex:1;padding:4px 0;background:#2b426b;color:#ffcc33;" onclick="setFormationPreviewAnim('walk')">行走</button>
               <button type="button" id="animBtnAttack" class="preset-btn" style="flex:1;padding:4px 0;" onclick="setFormationPreviewAnim('attack')">攻擊</button>
               <button type="button" id="animBtnIdle" class="preset-btn" style="flex:1;padding:4px 0;" onclick="setFormationPreviewAnim('idle')">待機</button>

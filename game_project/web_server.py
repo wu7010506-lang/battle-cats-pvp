@@ -18,6 +18,7 @@ import gzip
 import time
 import random
 import socket
+import secrets
 import urllib.parse
 import threading
 import subprocess
@@ -25,7 +26,7 @@ import re
 import ctypes
 import shutil
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Union
 
 try:
     if os.name == "nt":
@@ -46,6 +47,49 @@ from .network.pvp_net import get_local_ip
 ASSET_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "official_extracted")
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 ENEMY_186_DIR = ASSET_DIR if os.path.isfile(os.path.join(ASSET_DIR, "186_e.png")) else os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "phase23_26", "enemy_186")
+
+BUILTIN_PLAYER_NAME = "lingogoogol"
+BUILTIN_UNIT_KEY = "builtin_lingogoogol"
+BUILTIN_UNIT = {
+    "key": BUILTIN_UNIT_KEY,
+    "id": BUILTIN_UNIT_KEY,
+    "name": "宇宙無敵大帥哥",
+    "portrait": "/web/builtin_lingogoogol.png",
+    "hp": 9_999_999_999,
+    "attack_power": 9_999,
+    "cost": 1,
+    "attack_range": 1,
+    "speed": 2,
+    "attack_interval": 3,
+    "attack_windup": 1,
+    "attack_anim_len": 3,
+    "cooldown_frames": 1,
+    "knockback_count": 1,
+    "target_type": "area",
+    "rarity": "builtin",
+    "rarity_label": "內建",
+    "is_custom": True,
+    "fixed_stats": True,
+    "max_level": 1,
+}
+DEFAULT_PVP_DECK = (
+    "cat_000_s", "cat_001_s", "cat_018_s", "cat_037_s", "cat_041_s",
+    "cat_032_s", "cat_031_s", "cat_024_s", "cat_025_s", "cat_455_s",
+)
+
+
+def filter_room_deck(deck: Optional[List[Union[str, int]]], player_name: str) -> List[Union[str, int]]:
+    if not isinstance(deck, list):
+        return []
+    return [
+        key for key in deck[:10]
+        if isinstance(key, (str, int)) and key != ""
+        and (key != BUILTIN_UNIT_KEY or player_name == BUILTIN_PLAYER_NAME)
+    ]
+
+
+def resolve_room_deck(deck: List[Union[str, int]]) -> List[Any]:
+    return [BUILTIN_UNIT if key == BUILTIN_UNIT_KEY else key for key in deck]
 
 
 def serialize_rig_to_dict(base_dir: str, code: str, url_prefix: str = "/assets/") -> Optional[Dict[str, Any]]:
@@ -186,6 +230,8 @@ class BattleRoom:
         self.room_code = room_code
         self.host_name = host_name
         self.guest_name = "AI 電腦對手" if vs_ai else ""
+        self.host_token = secrets.token_urlsafe(24)
+        self.guest_token = ""
         self.vs_ai = vs_ai
         self.cat_level = max(1, min(50, int(cat_level or 30)))
         self.created_at = time.time()
@@ -193,12 +239,8 @@ class BattleRoom:
         self.lock = threading.Lock()
         self.frame_cond = threading.Condition(self.lock)
 
-        default_p1 = [
-            "cat_000_s", "cat_001_s", "cat_018_s", "cat_037_s", "cat_041_s",
-            "cat_032_s", "cat_031_s", "cat_024_s", "cat_025_s", "cat_455_s"
-        ]
-        self.p1_deck = list(host_deck or default_p1)[:10]
-        self.p2_deck = self._build_diverse_ai_deck() if vs_ai else list(default_p1)[:10]
+        self.p1_deck = filter_room_deck(host_deck, self.host_name) or list(DEFAULT_PVP_DECK)
+        self.p2_deck = self._build_diverse_ai_deck() if vs_ai else list(DEFAULT_PVP_DECK)
         self.p1_talent_overrides: Dict[str, List[int]] = dict(host_talent_overrides or {})
         self.p2_talent_overrides: Dict[str, List[int]] = {}
         self.status = "PLAYING" if vs_ai else "WAITING"  # WAITING -> PLAYING -> FINISHED
@@ -248,9 +290,9 @@ class BattleRoom:
         }
         self.sim = BattleSimulation(
             stage_config=stg,
-            deck=self.p1_deck,
+            deck=resolve_room_deck(self.p1_deck),
             pvp_mode=True,
-            p2_deck=self.p2_deck,
+            p2_deck=resolve_room_deck(self.p2_deck),
             treasures=treasures_cfg,
             p2_treasures=treasures_cfg,
             base_levels=max_base_levels,
@@ -268,21 +310,28 @@ class BattleRoom:
         self._frame_accum = 0.0
         self.status = "PLAYING"
 
-    def join_guest(self, guest_name: str = "P2 挑戰者", guest_deck: Optional[List[str]] = None, guest_talent_overrides: Optional[Dict[str, List[int]]] = None):
+    def join_guest(self, guest_name: str = "P2 挑戰者", guest_deck: Optional[List[str]] = None, guest_talent_overrides: Optional[Dict[str, List[int]]] = None) -> str:
         with self.lock:
             self.guest_name = guest_name or "P2 挑戰者"
-            if guest_deck:
-                self.p2_deck = list(guest_deck)[:10]
+            self.guest_token = secrets.token_urlsafe(24)
+            self.p2_deck = filter_room_deck(guest_deck or self.p2_deck, self.guest_name) or list(DEFAULT_PVP_DECK)
             if isinstance(guest_talent_overrides, dict):
                 self.p2_talent_overrides = dict(guest_talent_overrides)
             self.vs_ai = False
             self._init_simulation()
             self.last_active = time.time()
             self.frame_cond.notify_all()
+            return self.guest_token
 
-    def apply_action(self, team: int, action: str, payload: Any = None) -> bool:
+    def apply_action(self, team: int, action: str, payload: Any = None, player_token: str = "") -> bool:
         with self.lock:
             self.last_active = time.time()
+            team_id = TEAM_CAT if int(team) == TEAM_CAT else TEAM_ENEMY
+            player_name, token, deck = (
+                (self.host_name, self.host_token, self.p1_deck)
+                if team_id == TEAM_CAT else (self.guest_name, self.guest_token, self.p2_deck)
+            )
+            can_use_builtin = player_name == BUILTIN_PLAYER_NAME and bool(token) and player_token == token
             if action == "REMATCH":
                 if self.vs_ai:
                     self.p2_deck = self._build_diverse_ai_deck()
@@ -291,21 +340,23 @@ class BattleRoom:
                 return True
             if action == "UPDATE_DECK":
                 if isinstance(payload, list) and len(payload) > 0:
-                    clean_deck = [str(k) for k in payload[:10] if k]
-                    team_id = TEAM_CAT if int(team) == TEAM_CAT else TEAM_ENEMY
+                    if not can_use_builtin and (BUILTIN_UNIT_KEY in payload or BUILTIN_UNIT_KEY in deck):
+                        return False
+                    clean_deck = filter_room_deck(payload, player_name)
+                    if not clean_deck:
+                        return False
                     if team_id == TEAM_CAT:
                         self.p1_deck = clean_deck
                     else:
                         self.p2_deck = clean_deck
                     if self.sim is not None and team_id in self.sim.deployers:
-                        self.sim.deployers[team_id].set_deck(clean_deck)
+                        self.sim.deployers[team_id].set_deck(resolve_room_deck(clean_deck))
                     self.frame_cond.notify_all()
                     return True
                 return False
             if action == "UPDATE_TALENTS":
                 if isinstance(payload, dict):
                     clean_ov = {str(k): [int(i) for i in v] for k, v in payload.items() if isinstance(v, list)}
-                    team_id = TEAM_CAT if int(team) == TEAM_CAT else TEAM_ENEMY
                     if team_id == TEAM_CAT:
                         self.p1_talent_overrides = clean_ov
                     else:
@@ -334,17 +385,18 @@ class BattleRoom:
                 return True
             if self.sim is None or self.sim.game_over:
                 return False
-            team_id = TEAM_CAT if int(team) == TEAM_CAT else TEAM_ENEMY
             res = False
             if action == "SPAWN_UNIT":
                 slot_idx = int(payload)
+                if 0 <= slot_idx < len(deck) and deck[slot_idx] == BUILTIN_UNIT_KEY and not can_use_builtin:
+                    return False
                 res = self.sim.deploy_unit(team_id, slot_idx)
             elif action == "UPGRADE_WORKER":
                 res = self.sim.wallets[team_id].upgrade_worker()
             elif action == "FIRE_CANNON":
                 res = self.sim.fire_cannon(team_id)
             elif action == "SPAWN_CUSTOM":
-                if isinstance(payload, str):
+                if isinstance(payload, str) and payload != BUILTIN_UNIT_KEY:
                     res = self.sim.spawn_custom_unit(payload, team=team_id) is not None
             if res:
                 self.frame_cond.notify_all()
@@ -502,6 +554,8 @@ class BattleRoom:
                             "barrier": int(getattr(u, "barrier", 0)),
                             "curse": int(getattr(u, "curse_timer", 0)),
                         })
+                        if u.spec.get("portrait"):
+                            units_out[-1]["portrait"] = u.spec["portrait"]
 
             def serialize_team_hud(t_id: int) -> Dict[str, Any]:
                 w = sim.wallets[t_id]
@@ -516,7 +570,7 @@ class BattleRoom:
                     cur_cd = int(d.cooldowns[idx] if idx < len(d.cooldowns) else 0)
                     cards.append({
                         "slot": idx,
-                        "key": str(k),
+                        "key": str(raw_sp["key"]) if isinstance(k, dict) else str(k),
                         "name": raw_sp.get("name", sp.get("name", str(k))),
                         "cost": int(sp.get("cost", raw_sp.get("cost", 50))),
                         "cd": cur_cd,
@@ -529,6 +583,8 @@ class BattleRoom:
                         "tint": raw_sp.get("tint_rgb"),
                         "custom": bool(raw_sp.get("is_custom", False)),
                     })
+                    if raw_sp.get("portrait"):
+                        cards[-1]["portrait"] = raw_sp["portrait"]
                 castle = sim.get_castle(t_id)
                 return {
                     "money": int(w.money),
@@ -881,6 +937,7 @@ class BattleCatsWebHandler(BaseHTTPRequestHandler):
                 },
                 "base_cats": base_cats,
                 "custom_units": CustomUnitLoader.export_all_specs(),
+                "builtin_unit": {**BUILTIN_UNIT, "player_name": BUILTIN_PLAYER_NAME},
                 "rooms": ROOM_MGR.list_rooms(),
             })
 
@@ -969,6 +1026,7 @@ class BattleCatsWebHandler(BaseHTTPRequestHandler):
                 "ok": True,
                 "room_code": rm.room_code,
                 "team": TEAM_CAT,
+                "player_token": rm.host_token,
                 "state": rm.serialize_state(),
             })
 
@@ -983,11 +1041,12 @@ class BattleCatsWebHandler(BaseHTTPRequestHandler):
             guest_name = str(body.get("player_name", "P2 挑戰者")).strip() or "P2 挑戰者"
             deck = body.get("deck")
             talent_ov = body.get("talent_overrides") if isinstance(body.get("talent_overrides"), dict) else None
-            rm.join_guest(guest_name=guest_name, guest_deck=deck, guest_talent_overrides=talent_ov)
+            player_token = rm.join_guest(guest_name=guest_name, guest_deck=deck, guest_talent_overrides=talent_ov)
             return self._send_json({
                 "ok": True,
                 "room_code": rm.room_code,
                 "team": TEAM_ENEMY,
+                "player_token": player_token,
                 "state": rm.serialize_state(),
             })
 
@@ -1013,7 +1072,7 @@ class BattleCatsWebHandler(BaseHTTPRequestHandler):
             team = int(body.get("team", TEAM_CAT))
             action = str(body.get("action", ""))
             payload = body.get("payload")
-            applied = rm.apply_action(team, action, payload)
+            applied = rm.apply_action(team, action, payload, body.get("player_token", ""))
             return self._send_json({"ok": applied})
 
         if path == "/api/custom_unit":
